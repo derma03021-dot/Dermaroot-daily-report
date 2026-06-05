@@ -916,53 +916,56 @@ body.viewer-mode tr[draggable="true"] {
 }
 </style>
 <script>
+// ── 로그인 select: Firebase 없이 즉시 렌더 ──
+// 우선순위: 1) 로컬스토리지 캐시  2) 하드코딩 기본값
+const DEFAULT_BRANCHES = [
+  {id:'b1',name:'청주점',    pin:'1111'},
+  {id:'b2',name:'영종도점',  pin:'2222'},
+  {id:'b3',name:'화성동탄점',pin:'3333'},
+  {id:'b4',name:'명동점',    pin:'4444'},
+  {id:'b5',name:'강남점',    pin:'5555'},
+  {id:'b6',name:'마포점',    pin:'6666'},
+];
+const DEFAULT_ADMIN_PIN = '0000';
+const DEFAULT_DR_PIN    = '1234';
+
 function buildLockSelectEarly(branches){
   const sel = document.getElementById('lockSelect');
   if(!sel) return;
-  const list = branches || JSON.parse(localStorage.getItem('dr_branches')||'null') || [];
+  const list = branches
+    || (() => { try{ return JSON.parse(localStorage.getItem('dr_branches'))||null; }catch{return null;} })()
+    || DEFAULT_BRANCHES;
   sel.innerHTML = '';
-  const ao=document.createElement('option'); ao.value='admin'; ao.textContent='더마루트 관리자'; sel.appendChild(ao);
+  const ao=document.createElement('option'); ao.value='admin';     ao.textContent='더마루트 관리자'; sel.appendChild(ao);
   const mo=document.createElement('option'); mo.value='dermaroot'; mo.textContent='더마루트 직원 (전체)'; sel.appendChild(mo);
   list.forEach(b=>{
     const o=document.createElement('option');
-    o.value='branch_'+b.id; o.textContent='리베리의원 '+b.name;
+    o.value='branch_'+b.id;
+    o.textContent='리베리의원 '+b.name;
     sel.appendChild(o);
   });
 }
 
-// DOM 준비 후 Firebase에서 branches 로드해서 select 채우기
-document.addEventListener('DOMContentLoaded', async ()=>{
-  // 1) 로컬 캐시로 일단 채우기 (빠른 표시)
+// DOM 준비되자마자 즉시 select 채우기 (Firebase 무관)
+document.addEventListener('DOMContentLoaded', ()=>{
   buildLockSelectEarly();
 
-  // 2) Firebase 준비되면 최신값으로 갱신
-  const tryLoadBranches = async () => {
+  // Firebase 연결 완료 후 → 최신 branches로 조용히 갱신 (선택 실패해도 무방)
+  const refreshFromFB = async () => {
     if(!window.FB) return;
-    try {
-      let branches = await window.FB.get('branches');
-      // Firebase에 branches가 없으면 기본값 저장
-      if(!branches){
-        // initData가 아직 안 불렸으므로 기본 지점 데이터 직접 저장
-        const defaultBranches = [
-          {id:'b1',name:'청주점',pin:'1111'},
-          {id:'b2',name:'영종도점',pin:'2222'},
-          {id:'b3',name:'화성동탄점',pin:'3333'},
-          {id:'b4',name:'명동점',pin:'4444'},
-          {id:'b5',name:'강남점',pin:'5555'},
-          {id:'b6',name:'마포점',pin:'6666'},
-        ];
-        await window.FB.set('branches', defaultBranches);
-        await window.FB.set('adminPin', '0000');
-        branches = defaultBranches;
-      }
-      const arr = Array.isArray(branches) ? branches : Object.values(branches);
+    try{
+      let val = await window.FB.get('branches');
+      if(!val) return; // Firebase 비어있으면 기본값 유지
+      const arr = Array.isArray(val) ? val : Object.values(val).filter(v=>v&&v.id);
+      if(!arr.length) return;
       localStorage.setItem('dr_branches', JSON.stringify(arr));
-      buildLockSelectEarly(arr);
-    } catch(e){ console.warn('branches load fail:', e); }
+      buildLockSelectEarly(arr); // select 갱신
+    }catch(e){ /* Firebase 실패해도 기본값으로 작동 */ }
   };
 
-  if(window.FB_READY) tryLoadBranches();
-  else window.addEventListener('fb-ready', tryLoadBranches);
+  // FB 준비됐으면 바로, 아니면 준비 이벤트 대기
+  if(window.FB_READY) setTimeout(refreshFromFB, 0);
+  else window.addEventListener('fb-ready', ()=>setTimeout(refreshFromFB, 0));
 });
 </script>
 </head>
@@ -1463,6 +1466,7 @@ const LS = {
     localStorage.setItem('dr_'+k, JSON.stringify(v));
     // 공유 키면 Firebase에도 동기화
     if(FB_SHARED.includes(k) && window.FB){
+      if(k === 'tasks') window._myLastSave = Date.now(); // echo 방지
       window.FB.set(k, v).catch(e=>console.warn('FB write fail:',e));
     }
   },
@@ -1489,26 +1493,47 @@ async function syncFromFirebase(){
 }
 
 // 실시간 구독 등록 (로그인 후 호출)
+// 내가 방금 저장한 직후 타임스탬프 (Firebase echo 무시용)
+window._myLastSave = 0;
+
 function subscribeFirebase(){
   if(!window.FB) return;
-  // tasks 실시간 감지 → 화면 갱신
+
+  // tasks 실시간 감지
   window.FB.on('tasks', (val)=>{
     if(val === null) return;
-    const incoming = Array.isArray(val) ? val : Object.values(val);
-    const cur = JSON.stringify(LS.get('tasks'));
+
+    // Firebase는 배열을 객체로 줄 수 있음
+    const incoming = Array.isArray(val) ? val
+      : Object.values(val).filter(v => v && v.id);
+
+    // 내가 저장한 직후 500ms 이내 echo는 무시 (이미 로컬에 반영됨)
+    if(Date.now() - window._myLastSave < 500) return;
+
+    // 모달 열려있으면 보류 (작성 중인 내용 보호)
+    const modalOpen = document.getElementById('taskOverlay')?.classList.contains('open');
+    if(modalOpen){
+      // 로컬만 조용히 업데이트, 렌더는 모달 닫을 때
+      localStorage.setItem('dr_tasks', JSON.stringify(incoming));
+      window._pendingRender = true;
+      return;
+    }
+
+    // 현재 로컬과 다를 때만 갱신
+    const cur  = JSON.stringify(LS.get('tasks')||[]);
     const next = JSON.stringify(incoming);
     if(cur === next) return;
+
     localStorage.setItem('dr_tasks', JSON.stringify(incoming));
-    // 모달이 열려 있으면 렌더 보류 → 닫을 때 자동 갱신
-    const modalOpen = document.getElementById('taskOverlay')?.classList.contains('open');
-    if(!modalOpen && typeof render === 'function') render();
-    else window._pendingRender = true;
+    if(typeof render === 'function') render();
   });
-  // 설정성 데이터 (branches/staff/partners/routines) 실시간 감지
+
+  // 설정 데이터 실시간 감지 (branches/staff/partners/routines)
   ['branches','staff','partners','routines'].forEach(key=>{
     window.FB.on(key, (val)=>{
       if(val === null) return;
-      localStorage.setItem('dr_'+key, JSON.stringify(val));
+      const arr = Array.isArray(val) ? val : Object.values(val).filter(v=>v&&v.id);
+      localStorage.setItem('dr_'+key, JSON.stringify(arr.length ? arr : val));
     });
   });
 }
@@ -1638,6 +1663,20 @@ async function afterLogin(){
   fbShow();
   await syncFromFirebase();
   initData(); // Firebase 데이터 기반으로 로컬 초기화
+
+  // Firebase에 branches가 없으면 기본값 저장 (최초 1회)
+  if(window.FB){
+    try{
+      const fbBr = await window.FB.get('branches');
+      if(!fbBr){
+        await window.FB.set('branches', DEFAULT_BRANCHES);
+        await window.FB.set('adminPin', DEFAULT_ADMIN_PIN);
+        await window.FB.set('drPin', DEFAULT_DR_PIN);
+        localStorage.setItem('dr_branches', JSON.stringify(DEFAULT_BRANCHES));
+      }
+    }catch(e){}
+  }
+
   subscribeFirebase(); // 실시간 구독 시작
   buildLockSelect();
   document.getElementById('lockScreen').style.display='none';
@@ -1670,22 +1709,38 @@ async function doLock(){
   err.textContent='';
   fbShow();
 
-  // Firebase에서 최신 인증 데이터 가져오기
-  let adminPin = '0000', drPin = '1234', branches = [];
+  // Firebase에서 최신 인증 데이터 가져오기 (실패 시 로컬/기본값 사용)
+  let adminPin = DEFAULT_ADMIN_PIN;
+  let drPin    = DEFAULT_DR_PIN;
+  let branches = DEFAULT_BRANCHES;
+
+  // 로컬 캐시 먼저 로드
+  try{
+    const lbr = JSON.parse(localStorage.getItem('dr_branches')||'null');
+    const lap = JSON.parse(localStorage.getItem('dr_adminPin')||'null');
+    const ldp = JSON.parse(localStorage.getItem('dr_drPin')||'null');
+    if(lbr && lbr.length) branches = lbr;
+    if(lap) adminPin = lap;
+    if(ldp) drPin = ldp;
+  }catch(e){}
+
+  // Firebase 최신값으로 덮어쓰기 (실패해도 위 캐시/기본값으로 작동)
   try {
     const [ap, dp, br] = await Promise.all([
-      window.FB.get('adminPin'),
-      window.FB.get('drPin'),
-      window.FB.get('branches'),
+      window.FB ? window.FB.get('adminPin') : Promise.resolve(null),
+      window.FB ? window.FB.get('drPin')    : Promise.resolve(null),
+      window.FB ? window.FB.get('branches') : Promise.resolve(null),
     ]);
     if(ap) adminPin = ap;
-    if(dp) drPin = dp;
+    if(dp) drPin    = dp;
     if(br){
-      branches = Array.isArray(br) ? br : Object.values(br);
-      localStorage.setItem('dr_branches', JSON.stringify(branches));
-      localStorage.setItem('dr_adminPin', JSON.stringify(adminPin));
+      const arr = Array.isArray(br) ? br : Object.values(br).filter(v=>v&&v.id);
+      if(arr.length){
+        branches = arr;
+        localStorage.setItem('dr_branches', JSON.stringify(arr));
+      }
     }
-  } catch(e){ console.warn('FB auth fetch fail:', e); }
+  } catch(e){ console.warn('FB auth fetch (non-fatal):', e); }
 
   fbHide();
 
@@ -4307,8 +4362,22 @@ function submitTask(){
     const i=tasks.findIndex(t=>t.id===editTaskId);
     if(i>-1) tasks[i]=obj;
   } else tasks.push(obj);
-  LS.set('tasks',tasks);
-  closeTaskModal(); render();
+
+  // 1) 로컬 즉시 반영 + 화면 갱신
+  localStorage.setItem('dr_tasks', JSON.stringify(tasks));
+  closeTaskModal();
+  render();
+
+  // 2) Firebase에 저장 (비동기 — 실패해도 로컬은 이미 반영됨)
+  if(window.FB){
+    window.FB.set('tasks', tasks)
+      .then(()=>{
+        // Firebase 저장 완료 후 한 번 더 render (혹시 중간에 다른 사람 데이터 들어왔으면 반영)
+        const latest = LS.get('tasks')||[];
+        render();
+      })
+      .catch(e=>console.warn('FB tasks save fail:', e));
+  }
 }
 
 function editTask(idx){openTaskModal(idx);}
