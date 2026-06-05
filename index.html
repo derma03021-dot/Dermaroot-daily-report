@@ -84,6 +84,27 @@ window.dispatchEvent(new Event('fb-ready'));
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes toastIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(16px)}}
+
+/* ── 토스트 알림 ── */
+#toastContainer{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  z-index:99999;display:flex;flex-direction:column;align-items:center;gap:8px;
+  pointer-events:none;
+}
+.toast{
+  background:var(--surface);border:1px solid var(--border2);
+  color:var(--text);font-size:12px;font-weight:500;
+  padding:10px 20px;border-radius:24px;
+  box-shadow:0 4px 20px rgba(0,0,0,.25);
+  animation:toastIn .2s ease;
+  display:flex;align-items:center;gap:8px;
+  white-space:nowrap;
+}
+.toast.success{border-color:var(--green);color:var(--green);}
+.toast.error{border-color:var(--red);color:var(--red);}
+.toast.info{border-color:var(--accent);color:var(--accent);}
 html{scroll-behavior:smooth;}
 body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;min-height:100vh;transition:background .25s,color .25s;}
 
@@ -1095,6 +1116,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
   <div style="color:#fff;font-size:12px;letter-spacing:.08em;opacity:.8">서버 동기화 중...</div>
 </div>
 
+<!-- ── 토스트 알림 컨테이너 ── -->
+<div id="toastContainer"></div>
+
 <!-- ── MAIN ── -->
 <main id="mainContent" style="display:none"></main>
 
@@ -1542,7 +1566,10 @@ function subscribeFirebase(){
     if(cur === next) return;
 
     localStorage.setItem('dr_tasks', JSON.stringify(incoming));
-    if(typeof render === 'function') render();
+    if(typeof render === 'function'){
+      render();
+      showToast('🔄 업무 목록이 업데이트되었습니다', 'info', 2000);
+    }
   });
 
   // 설정 데이터 실시간 감지 (branches/staff/partners/routines)
@@ -1627,6 +1654,30 @@ function initData(){
 //  SESSION
 // ══════════════════════════════════════════
 let SESSION = {role:'', branchId:''};
+
+// ── 토스트 알림 ──
+let _activeToast = null;
+function showToast(msg, type='info', duration=2500){
+  const container = document.getElementById('toastContainer');
+  if(!container) return;
+
+  // 기존 토스트 제거
+  if(_activeToast){ _activeToast.remove(); _activeToast=null; }
+
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  container.appendChild(el);
+  _activeToast = el;
+
+  if(duration > 0){
+    setTimeout(()=>{
+      el.style.animation = 'toastOut .2s ease forwards';
+      setTimeout(()=>{ el.remove(); if(_activeToast===el) _activeToast=null; }, 200);
+    }, duration);
+  }
+  return el;
+}
 
 // ── 테마 전환 ──
 function setTheme(mode){
@@ -4486,15 +4537,29 @@ function submitTask(){
 
   // 로컬 즉시 반영
   localStorage.setItem('dr_tasks', JSON.stringify(tasks));
-  // 저장 시각 기록 (Firebase echo 무시용 - 2초로 여유있게)
   window._myLastSave = Date.now();
   closeTaskModal();
-  render(); // 즉시 화면 갱신
+  render();
 
-  // Firebase 비동기 저장
+  // Firebase 저장 + 결과 토스트
   if(window.FB){
+    showToast('저장 중...', 'info', 0); // 0 = 자동닫기 없음
     window.FB.set('tasks', tasks)
-      .catch(e=>console.warn('FB tasks save fail:', e));
+      .then(()=>{
+        showToast('✓ 업무가 저장되었습니다', 'success', 2500);
+      })
+      .catch(e=>{
+        showToast('⚠ 서버 저장 실패 — 재시도 중...', 'error', 3000);
+        console.warn('FB tasks save fail:', e);
+        // 3초 후 재시도
+        setTimeout(()=>{
+          window.FB.set('tasks', tasks)
+            .then(()=> showToast('✓ 저장 완료', 'success', 2000))
+            .catch(()=> showToast('✗ 저장 실패. 네트워크를 확인하세요.', 'error', 4000));
+        }, 3000);
+      });
+  } else {
+    showToast('✓ 저장되었습니다 (로컬)', 'success', 2000);
   }
 }
 
@@ -4535,6 +4600,7 @@ function deleteTask(idx){
   LS.set('tasks',tasks);
   renderRoutinePanel();
   render();
+  showToast('🗑 업무가 삭제되었습니다', 'info', 2000);
 }
 
 // ══════════════════════════════════════════
