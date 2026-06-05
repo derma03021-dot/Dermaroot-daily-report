@@ -89,8 +89,8 @@ window.dispatchEvent(new Event('fb-ready'));
 
 /* ── 토스트 알림 ── */
 #toastContainer{
-  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
-  z-index:99999;display:flex;flex-direction:column;align-items:center;gap:8px;
+  position:fixed;bottom:28px;right:24px;
+  z-index:99999;display:flex;flex-direction:column;align-items:flex-end;gap:8px;
   pointer-events:none;
 }
 .toast{
@@ -1548,13 +1548,11 @@ function subscribeFirebase(){
     const incoming = Array.isArray(val) ? val
       : Object.values(val).filter(v => v && v.id);
 
-    // 내가 저장한 직후 2초 이내 echo는 무시 (로컬에 이미 반영됨)
-    if(Date.now() - window._myLastSave < 2000) return;
+    const isMyEcho = (Date.now() - window._myLastSave) < 2000;
 
     // 모달 열려있으면 보류 (작성 중인 내용 보호)
     const modalOpen = document.getElementById('taskOverlay')?.classList.contains('open');
     if(modalOpen){
-      // 로컬만 조용히 업데이트, 렌더는 모달 닫을 때
       localStorage.setItem('dr_tasks', JSON.stringify(incoming));
       window._pendingRender = true;
       return;
@@ -1566,9 +1564,11 @@ function subscribeFirebase(){
     if(cur === next) return;
 
     localStorage.setItem('dr_tasks', JSON.stringify(incoming));
-    if(typeof render === 'function'){
-      render();
-      showToast('🔄 업무 목록이 업데이트되었습니다', 'info', 2000);
+    if(typeof render === 'function') render();
+
+    // 다른 사람이 업데이트한 경우에만 알림 (내 echo는 제외)
+    if(!isMyEcho){
+      showToast('🔔 새 업무가 업데이트되었습니다', 'info', 3000);
     }
   });
 
@@ -4538,28 +4538,31 @@ function submitTask(){
   // 로컬 즉시 반영
   localStorage.setItem('dr_tasks', JSON.stringify(tasks));
   window._myLastSave = Date.now();
+
+  // 토스트 먼저 → 그 다음 모달 닫기 (순서 중요)
+  const isEdit = !!editTaskId;
+  showToast(isEdit ? '💾 업무를 수정하는 중...' : '💾 업무를 등록하는 중...', 'info', 0);
+
   closeTaskModal();
   render();
 
-  // Firebase 저장 + 결과 토스트
+  // Firebase 저장
   if(window.FB){
-    showToast('저장 중...', 'info', 0); // 0 = 자동닫기 없음
     window.FB.set('tasks', tasks)
       .then(()=>{
-        showToast('✓ 업무가 저장되었습니다', 'success', 2500);
+        showToast(isEdit ? '✅ 업무가 수정되었습니다' : '✅ 업무가 등록되었습니다', 'success', 3000);
       })
       .catch(e=>{
-        showToast('⚠ 서버 저장 실패 — 재시도 중...', 'error', 3000);
-        console.warn('FB tasks save fail:', e);
-        // 3초 후 재시도
+        console.warn('FB save fail:', e);
+        showToast('⚠ 서버 저장 실패 — 재시도 중...', 'error', 0);
         setTimeout(()=>{
           window.FB.set('tasks', tasks)
-            .then(()=> showToast('✓ 저장 완료', 'success', 2000))
-            .catch(()=> showToast('✗ 저장 실패. 네트워크를 확인하세요.', 'error', 4000));
+            .then(()=> showToast('✅ 저장 완료', 'success', 2500))
+            .catch(()=> showToast('❌ 저장 실패. 네트워크를 확인하세요.', 'error', 5000));
         }, 3000);
       });
   } else {
-    showToast('✓ 저장되었습니다 (로컬)', 'success', 2000);
+    showToast('✅ 업무가 등록되었습니다', 'success', 2500);
   }
 }
 
@@ -4607,7 +4610,9 @@ function deleteTask(idx){
 //  SETTINGS
 // ══════════════════════════════════════════
 function openSettings(){
-  if(SESSION.role!=='admin'){alert('관리자만 설정을 변경할 수 있습니다.');return;}
+  if(SESSION.role!=='admin' && SESSION.role!=='dermaroot'){
+    alert('관리자 또는 더마루트 직원만 설정을 변경할 수 있습니다.');return;
+  }
   renderSettingsLists();
   document.getElementById('settingsPanel').classList.add('open');
 }
