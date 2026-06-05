@@ -6,30 +6,59 @@
 <title>Dermaroot daily report</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<!-- Firebase SDK (compat - 동기 로드) -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<!-- Firebase SDK: 동적 로드 - 실패해도 앱 전체 정상 작동 -->
 <script>
-const firebaseConfig = {
-  apiKey: "AIzaSyC5AgRfKFrbqUDmEhweFMEaO5AfTdZyJWA",
-  authDomain: "dermaroot-report-6d21d.firebaseapp.com",
-  databaseURL: "https://dermaroot-report-6d21d-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "dermaroot-report-6d21d",
-  storageBucket: "dermaroot-report-6d21d.firebasestorage.app",
-  messagingSenderId: "487662796633",
-  appId: "1:487662796633:web:50c04bfe8e0e2918139648"
-};
-firebase.initializeApp(firebaseConfig);
-const _fbdb = firebase.database();
+window.FB = null;
+window.FB_READY = false;
 
-window.FB = {
-  get: (key) => _fbdb.ref(key).get().then(s => s.exists() ? s.val() : null),
-  set: (key, val) => _fbdb.ref(key).set(val),
-  on:  (key, cb) => _fbdb.ref(key).on('value', s => cb(s.exists() ? s.val() : null)),
-  off: (key) => _fbdb.ref(key).off(),
-};
-window.FB_READY = true;
-window.dispatchEvent(new Event('fb-ready'));
+(function loadFirebase(){
+  const SDK_URLS = [
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js',
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js'
+  ];
+  let loaded = 0;
+
+  function onScriptLoad(){
+    loaded++;
+    if(loaded < SDK_URLS.length) return;
+    // 두 SDK 모두 로드 완료 → Firebase 초기화
+    try {
+      firebase.initializeApp({
+        apiKey: "AIzaSyC5AgRfKFrbqUDmEhweFMEaO5AfTdZyJWA",
+        authDomain: "dermaroot-report-6d21d.firebaseapp.com",
+        databaseURL: "https://dermaroot-report-6d21d-default-rtdb.asia-southeast1.firebasedatabase.app",
+        projectId: "dermaroot-report-6d21d",
+        storageBucket: "dermaroot-report-6d21d.firebasestorage.app",
+        messagingSenderId: "487662796633",
+        appId: "1:487662796633:web:50c04bfe8e0e2918139648"
+      });
+      const _db = firebase.database();
+      window.FB = {
+        get: (k) => _db.ref(k).get().then(s => s.exists() ? s.val() : null),
+        set: (k, v) => _db.ref(k).set(v),
+        on:  (k, cb) => _db.ref(k).on('value', s => cb(s.exists() ? s.val() : null)),
+        off: (k) => _db.ref(k).off(),
+      };
+      window.FB_READY = true;
+      window.dispatchEvent(new Event('fb-ready'));
+    } catch(e){
+      console.warn('Firebase init fail (offline mode):', e.message);
+    }
+  }
+
+  function onScriptError(){
+    // CDN 로드 실패 = 오프라인/file:// → FB는 null 유지, 앱은 정상 작동
+    console.warn('Firebase SDK load failed - offline mode');
+  }
+
+  SDK_URLS.forEach(url => {
+    const s = document.createElement('script');
+    s.src = url;
+    s.onload = onScriptLoad;
+    s.onerror = onScriptError;
+    document.head.appendChild(s);
+  });
+})();
 </script>
 <style>
 /* ══ 기본 모드 (default) ══ */
@@ -926,7 +955,8 @@ tr[draggable="true"]:active{cursor:grabbing;}
 /* ── 지점 계정 뷰어 모드: 추가/수정/삭제 숨김 ── */
 body.viewer-mode .row-btns,
 body.viewer-mode .h-btn-primary,
-body.viewer-mode #routineActionBar {
+body.viewer-mode #routineActionBar,
+body.viewer-mode .h-btn-settings {
   display:none!important;
 }
 body.viewer-mode tr[draggable="true"] {
@@ -1517,19 +1547,31 @@ const LS = {
 async function syncFromFirebase(){
   if(!window.FB) return;
   fbShow();
+  // 5초 타임아웃: Firebase 응답 없으면 로컬 데이터로 계속 진행
+  const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 5000));
   try {
-    for(const key of FB_SHARED){
-      let val = await window.FB.get(key);
-      if(val !== null){
-        // Firebase는 배열을 객체로 반환할 수 있음 → 배열로 변환
-        if(['branches','staff','partners','routines','tasks'].includes(key)){
-          if(val && !Array.isArray(val)) val = Object.values(val);
-          if(!Array.isArray(val)) val = [];
+    await Promise.race([
+      (async()=>{
+        for(const key of FB_SHARED){
+          let val = await window.FB.get(key);
+          if(val !== null){
+            if(['branches','staff','partners','routines','tasks'].includes(key)){
+              if(val && !Array.isArray(val)) val = Object.values(val);
+              if(!Array.isArray(val)) val = [];
+            }
+            localStorage.setItem('dr_'+key, JSON.stringify(val));
+          }
         }
-        localStorage.setItem('dr_'+key, JSON.stringify(val));
-      }
+      })(),
+      timeout
+    ]);
+  } catch(e){
+    if(e.message === 'timeout'){
+      console.warn('Firebase sync timeout - 로컬 데이터 사용');
+    } else {
+      console.warn('FB sync fail:', e);
     }
-  } catch(e){ console.warn('FB sync fail:', e); }
+  }
   fbHide();
 }
 
@@ -1792,23 +1834,29 @@ async function doLock(){
     if(ldp) drPin = ldp;
   }catch(e){}
 
-  // Firebase 최신값으로 덮어쓰기 (실패해도 위 캐시/기본값으로 작동)
-  try {
-    const [ap, dp, br] = await Promise.all([
-      window.FB ? window.FB.get('adminPin') : Promise.resolve(null),
-      window.FB ? window.FB.get('drPin')    : Promise.resolve(null),
-      window.FB ? window.FB.get('branches') : Promise.resolve(null),
-    ]);
-    if(ap) adminPin = ap;
-    if(dp) drPin    = dp;
-    if(br){
-      const arr = Array.isArray(br) ? br : Object.values(br).filter(v=>v&&v.id);
-      if(arr.length){
-        branches = arr;
-        localStorage.setItem('dr_branches', JSON.stringify(arr));
+  // Firebase 최신값으로 덮어쓰기 (3초 타임아웃 - 실패해도 로컬/기본값으로 작동)
+  if(window.FB){
+    try {
+      const fbTimeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),3000));
+      const [ap, dp, br] = await Promise.race([
+        Promise.all([
+          window.FB.get('adminPin'),
+          window.FB.get('drPin'),
+          window.FB.get('branches'),
+        ]),
+        fbTimeout.then(()=>[null,null,null])
+      ]);
+      if(ap) adminPin = ap;
+      if(dp) drPin    = dp;
+      if(br){
+        const arr = Array.isArray(br) ? br : Object.values(br).filter(v=>v&&v.id);
+        if(arr.length){
+          branches = arr;
+          localStorage.setItem('dr_branches', JSON.stringify(arr));
+        }
       }
-    }
-  } catch(e){ console.warn('FB auth fetch (non-fatal):', e); }
+    } catch(e){ console.warn('FB auth fetch (non-fatal):', e.message); }
+  }
 
   fbHide();
 
@@ -4610,9 +4658,6 @@ function deleteTask(idx){
 //  SETTINGS
 // ══════════════════════════════════════════
 function openSettings(){
-  if(SESSION.role!=='admin' && SESSION.role!=='dermaroot'){
-    alert('관리자 또는 더마루트 직원만 설정을 변경할 수 있습니다.');return;
-  }
   renderSettingsLists();
   document.getElementById('settingsPanel').classList.add('open');
 }
