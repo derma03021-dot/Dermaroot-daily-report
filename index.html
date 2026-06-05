@@ -6,12 +6,10 @@
 <title>Dermaroot daily report</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<!-- Firebase SDK -->
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, set, get, onValue, update, remove }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
+<!-- Firebase SDK (compat - 동기 로드) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
 const firebaseConfig = {
   apiKey: "AIzaSyC5AgRfKFrbqUDmEhweFMEaO5AfTdZyJWA",
   authDomain: "dermaroot-report-6d21d.firebaseapp.com",
@@ -21,34 +19,15 @@ const firebaseConfig = {
   messagingSenderId: "487662796633",
   appId: "1:487662796633:web:50c04bfe8e0e2918139648"
 };
-
-const fbApp = initializeApp(firebaseConfig);
-const db = getDatabase(fbApp);
-
-// ── Firebase DB 래퍼 (전역 노출) ──
-const FB_KEYS = ['tasks','branches','staff','partners','routines','adminPin','staffVer','routineVer','drPin'];
+firebase.initializeApp(firebaseConfig);
+const _fbdb = firebase.database();
 
 window.FB = {
-  db,
-  ref: (path) => ref(db, path),
-
-  // 읽기 (1회)
-  get: async (key) => {
-    const snap = await get(ref(db, key));
-    return snap.exists() ? snap.val() : null;
-  },
-
-  // 쓰기
-  set: (key, val) => set(ref(db, key), val),
-
-  // 실시간 구독
-  on: (key, cb) => onValue(ref(db, key), snap => cb(snap.exists() ? snap.val() : null)),
-
-  // 키가 Firebase 공유 대상인지 판단
-  isShared: (key) => FB_KEYS.includes(key),
+  get: (key) => _fbdb.ref(key).get().then(s => s.exists() ? s.val() : null),
+  set: (key, val) => _fbdb.ref(key).set(val),
+  on:  (key, cb) => _fbdb.ref(key).on('value', s => cb(s.exists() ? s.val() : null)),
+  off: (key) => _fbdb.ref(key).off(),
 };
-
-// FB 준비 완료 신호
 window.FB_READY = true;
 window.dispatchEvent(new Event('fb-ready'));
 </script>
@@ -186,7 +165,8 @@ a:hover{text-decoration:underline;}
 
 /* ── D-DAY POPUP ── */
 #ddayPopup{
-  display:none;position:fixed;top:56px;left:0;right:0;z-index:8000;
+  display:none;position:fixed;top:56px;right:20px;left:auto;z-index:8000;
+  width:340px;max-width:calc(100vw - 32px);
   background:linear-gradient(90deg,#1a2040,#0f1628);
   border-bottom:2px solid var(--yellow);
   padding:12px 24px;
@@ -977,9 +957,14 @@ window.addEventListener('fb-ready', async ()=>{
 <!-- ── D-DAY POPUP ── -->
 <div id="ddayPopup">
   <div class="dday-inner">
-    <span class="dday-title">⏰ D-DAY 알림</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div>
+        <div class="dday-title">⏰ 오늘의 데드라인 체크</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:2px">오늘·내일 마감 및 지연 업무</div>
+      </div>
+      <button class="dday-close">×</button>
+    </div>
     <div class="dday-items" id="ddayItems"></div>
-    <button class="dday-close" onclick="document.getElementById('ddayPopup').style.display='none'">×</button>
   </div>
 </div>
 
@@ -1473,12 +1458,15 @@ function subscribeFirebase(){
   // tasks 실시간 감지 → 화면 갱신
   window.FB.on('tasks', (val)=>{
     if(val === null) return;
+    const incoming = Array.isArray(val) ? val : Object.values(val);
     const cur = JSON.stringify(LS.get('tasks'));
-    const next = JSON.stringify(val);
-    if(cur !== next){
-      localStorage.setItem('dr_tasks', JSON.stringify(val));
-      if(typeof render === 'function') render();
-    }
+    const next = JSON.stringify(incoming);
+    if(cur === next) return;
+    localStorage.setItem('dr_tasks', JSON.stringify(incoming));
+    // 모달이 열려 있으면 렌더 보류 → 닫을 때 자동 갱신
+    const modalOpen = document.getElementById('taskOverlay')?.classList.contains('open');
+    if(!modalOpen && typeof render === 'function') render();
+    else window._pendingRender = true;
   });
   // 설정성 데이터 (branches/staff/partners/routines) 실시간 감지
   ['branches','staff','partners','routines'].forEach(key=>{
@@ -1653,26 +1641,45 @@ function buildLockSelect(){
 }
 // buildLockSelect는 afterLogin에서 호출됨
 
-function doLock(){
+async function doLock(){
   const val=document.getElementById('lockSelect').value;
   const pin=document.getElementById('lockPin').value.trim();
   const err=document.getElementById('lockErr');
   err.textContent='';
+  fbShow();
+
+  // Firebase에서 최신 인증 데이터 가져오기
+  let adminPin = '0000', drPin = '1234', branches = [];
+  try {
+    const [ap, dp, br] = await Promise.all([
+      window.FB.get('adminPin'),
+      window.FB.get('drPin'),
+      window.FB.get('branches'),
+    ]);
+    if(ap) adminPin = ap;
+    if(dp) drPin = dp;
+    if(br){
+      branches = Array.isArray(br) ? br : Object.values(br);
+      localStorage.setItem('dr_branches', JSON.stringify(branches));
+      localStorage.setItem('dr_adminPin', JSON.stringify(adminPin));
+    }
+  } catch(e){ console.warn('FB auth fetch fail:', e); }
+
+  fbHide();
 
   if(val==='admin'){
-    if(pin!==LS.get('adminPin')){err.textContent='PIN이 올바르지 않습니다.';return;}
+    if(pin!==adminPin){err.textContent='PIN이 올바르지 않습니다.';return;}
     SESSION={role:'admin',branchId:''};
+    document.body.classList.remove('viewer-mode');
   } else if(val==='dermaroot'){
-    // dermaroot staff: use admin pin or special "dr" pin
-    const drPin = LS.get('drPin')||'1234';
-    if(pin!==drPin && pin!==LS.get('adminPin')){err.textContent='PIN이 올바르지 않습니다.';return;}
+    if(pin!==drPin && pin!==adminPin){err.textContent='PIN이 올바르지 않습니다.';return;}
     SESSION={role:'dermaroot',branchId:''};
+    document.body.classList.remove('viewer-mode');
   } else {
     const bId=val.replace('branch_','');
-    const branches=LS.get('branches')||[];
     const branch=branches.find(b=>b.id===bId);
     if(!branch){err.textContent='지점 정보를 찾을 수 없습니다.';return;}
-    if(pin!==branch.pin && pin!==LS.get('adminPin')){err.textContent='PIN이 올바르지 않습니다.';return;}
+    if(pin!==branch.pin && pin!==adminPin){err.textContent='PIN이 올바르지 않습니다.';return;}
     SESSION={role:'branch',branchId:bId};
     document.body.classList.add('viewer-mode');
   }
@@ -1716,43 +1723,72 @@ document.getElementById('searchInput').addEventListener('input',e=>{
 //  D-DAY CHECK (9AM)
 // ══════════════════════════════════════════
 function checkDday(){
-  const now=new Date();
-  const lastShown=LS.get('ddayShown');
-  const todayStr=now.toISOString().slice(0,10);
-  // 오전 9~10시만 표시, 오늘 닫기 누르면 하루 종일 안 뜸
-  const h=now.getHours();
-  if(h<9 || h>=10) return;
-  if(LS.get('ddayDismissed')===todayStr) return;
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0,10);
+  const h = now.getHours();
 
-  const tasks=getVisibleTasks();
-  const today=new Date(); today.setHours(0,0,0,0);
-  const urgent=tasks.filter(t=>{
-    if(!t.deadline||t.status==='완료') return false;
-    const dl=new Date(t.deadline);
-    const diff=Math.ceil((dl-today)/86400000);
-    return diff<=1;
+  // 이미 오늘 닫기 눌렀으면 패스
+  if(localStorage.getItem('dday_dismissed') === todayStr) return;
+
+  // 9~10시 사이 접속 시 바로 표시
+  // 9시 이전 접속 시 → 9시에 자동 트리거 예약
+  if(h < 9){
+    const msUntil9 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0) - now;
+    setTimeout(()=>showDdayPopup(todayStr), msUntil9);
+    return;
+  }
+  // 10시 이후면 팝업 없음
+  if(h >= 10) return;
+
+  showDdayPopup(todayStr);
+}
+
+function showDdayPopup(todayStr){
+  const tasks = getVisibleTasks();
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  const urgent = tasks.filter(t=>{
+    if(!t.deadline || t.status==='완료') return false;
+    const dl = new Date((t.deadline||'').slice(0,10)+'T00:00:00');
+    const diff = Math.ceil((dl - today) / 86400000);
+    return diff <= 2; // 오늘·내일·D+
   });
   if(!urgent.length) return;
 
-  const container=document.getElementById('ddayItems');
-  container.innerHTML='';
+  // 팝업 빌드
+  const container = document.getElementById('ddayItems');
+  container.innerHTML = '';
+  urgent.sort((a,b)=>(a.deadline||'').localeCompare(b.deadline||''));
   urgent.forEach(t=>{
-    const dl=new Date(t.deadline); dl.setHours(0,0,0,0);
-    const diff=Math.ceil((dl-today)/86400000);
-    const chip=document.createElement('span');
-    chip.className='dday-chip'+(diff<0?' urgent':'');
-    const label=diff<0?`D+${Math.abs(diff)}`:diff===0?'D-DAY':`D-${diff}`;
-    chip.textContent=`[${label}] ${t.task}`;
-    container.appendChild(chip);
+    const dl = new Date((t.deadline||'').slice(0,10)+'T00:00:00');
+    const diff = Math.ceil((dl - today) / 86400000);
+    const label = diff < 0 ? `D+${Math.abs(diff)}` : diff === 0 ? 'D-DAY' : `D-${diff}`;
+    const isOver = diff < 0;
+    const isToday = diff === 0;
+    const color = isOver ? 'var(--red)' : isToday ? 'var(--orange)' : 'var(--yellow)';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);';
+    row.innerHTML = `
+      <span style="font-size:10px;font-weight:700;font-family:var(--mono);color:${color};
+        background:${color}18;border:1px solid ${color}40;padding:2px 8px;border-radius:10px;
+        flex-shrink:0;min-width:52px;text-align:center">${label}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.task}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:1px">${t.dept||''} ${t.person?'· '+t.person:''}</div>
+      </div>
+      <span style="font-size:10px;color:var(--text-faint);flex-shrink:0">${(t.deadline||'').slice(5).replace('-','/')}</span>`;
+    container.appendChild(row);
   });
 
-  document.getElementById('ddayPopup').style.display='block';
-  LS.set('ddayShown',todayStr);
+  // 마지막 행 border 제거
+  const rows = container.querySelectorAll('div');
+  if(rows.length) rows[rows.length-1].style.borderBottom = 'none';
 
-  // schedule dismiss on close
-  document.querySelector('.dday-close').onclick=()=>{
-    document.getElementById('ddayPopup').style.display='none';
-    LS.set('ddayDismissed',todayStr);
+  document.getElementById('ddayPopup').style.display = 'block';
+
+  document.querySelector('.dday-close').onclick = ()=>{
+    document.getElementById('ddayPopup').style.display = 'none';
+    localStorage.setItem('dday_dismissed', todayStr);
   };
 }
 
@@ -3950,7 +3986,10 @@ function openTaskModal(idx=null){
   document.getElementById('taskOverlay').classList.add('open');
 }
 
-function closeTaskModal(){document.getElementById('taskOverlay').classList.remove('open');}
+function closeTaskModal(){
+  document.getElementById('taskOverlay').classList.remove('open');
+  if(window._pendingRender){ window._pendingRender=false; render(); }
+}
 
 // ── 스펙 패널 (디자인/영상) ──
 const SPEC_GROUPS = {
