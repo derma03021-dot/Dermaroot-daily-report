@@ -1905,30 +1905,34 @@ function getVisibleTasks(){
 
 function getFilteredTasks(){
   return getVisibleTasks().filter(t=>{
-    // 날짜 필터: start ~ deadline 범위 안에 선택 날짜가 포함되면 표시
-    // 데드라인 없는 업무는 등록일(createdAt) 기준으로 표시
+    // 날짜 필터
     if(fDate){
       const dl = (t.deadline||'').slice(0,10);
-      const st = (t.start || t.createdAt || dl || fDate);
-      if(dl){
-        // 데드라인 있음: start~deadline 범위 체크
-        if(fDate < st || fDate > dl) return false;
+      const st = (t.start||'') || (t.createdAt||'') || dl;
+      // 데드라인도 없고 등록일도 없으면 → 항상 표시
+      if(!dl && !st) { /* pass */ }
+      else if(dl){
+        // 데드라인 있음: start(또는 등록일) ~ deadline 범위
+        const rangeStart = (st && st <= dl) ? st : dl; // 빈 문자열 방어
+        if(fDate < rangeStart || fDate > dl) return false;
       } else {
-        // 데드라인 없음: 등록일(createdAt) 이후면 표시
-        if(st && fDate < st) return false;
+        // 데드라인 없음, 등록일만 있음: 등록일 이후 날짜에 표시
+        if(fDate < st) return false;
       }
     }
-    // 월 필터: start ~ deadline 기간이 해당 월과 겹치면 표시
-    // 데드라인 없는 업무는 등록월 기준
+    // 월 필터
     if(fMonth){
       const dl = (t.deadline||'').slice(0,7);
-      const st = (t.start || t.createdAt || t.deadline||'').slice(0,7);
-      if(dl){
-        // 데드라인 있음: 기간이 해당 월과 겹치면 표시
-        if(dl < fMonth || (st && st > fMonth)) return false;
+      const st = ((t.start||'') || (t.createdAt||'') || dl).slice(0,7);
+      // 데드라인도 없고 등록일도 없으면 → 항상 표시
+      if(!dl && !st) { /* pass */ }
+      else if(dl){
+        // 데드라인 있는 기간이 해당 월과 겹치면 표시
+        const rangeStart = (st && st <= dl) ? st : dl;
+        if(fMonth < rangeStart || fMonth > dl) return false;
       } else {
-        // 데드라인 없음: 등록월 기준
-        if(st && st !== fMonth) return false;
+        // 데드라인 없음: 등록월과 일치하면 표시
+        if(st.slice(0,7) !== fMonth) return false;
       }
     }
     // 지점 탭 필터 (관리자/직원 전용)
