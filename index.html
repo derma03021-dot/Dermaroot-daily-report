@@ -1524,8 +1524,8 @@ function subscribeFirebase(){
     const incoming = Array.isArray(val) ? val
       : Object.values(val).filter(v => v && v.id);
 
-    // 내가 저장한 직후 500ms 이내 echo는 무시 (이미 로컬에 반영됨)
-    if(Date.now() - window._myLastSave < 500) return;
+    // 내가 저장한 직후 2초 이내 echo는 무시 (로컬에 이미 반영됨)
+    if(Date.now() - window._myLastSave < 2000) return;
 
     // 모달 열려있으면 보류 (작성 중인 내용 보호)
     const modalOpen = document.getElementById('taskOverlay')?.classList.contains('open');
@@ -1906,21 +1906,30 @@ function getVisibleTasks(){
 function getFilteredTasks(){
   return getVisibleTasks().filter(t=>{
     // 날짜 필터: start ~ deadline 범위 안에 선택 날짜가 포함되면 표시
+    // 데드라인 없는 업무는 등록일(createdAt) 기준으로 표시
     if(fDate){
-      if(!t.deadline) return false;
       const dl = (t.deadline||'').slice(0,10);
-      // start: 입력된 시작일 or 등록일(createdAt) or deadline과 동일
-      const st = t.start || t.createdAt || dl;
-      // 선택 날짜가 시작일~데드라인 범위 내에 있으면 표시
-      if(fDate < st || fDate > dl) return false;
+      const st = (t.start || t.createdAt || dl || fDate);
+      if(dl){
+        // 데드라인 있음: start~deadline 범위 체크
+        if(fDate < st || fDate > dl) return false;
+      } else {
+        // 데드라인 없음: 등록일(createdAt) 이후면 표시
+        if(st && fDate < st) return false;
+      }
     }
     // 월 필터: start ~ deadline 기간이 해당 월과 겹치면 표시
+    // 데드라인 없는 업무는 등록월 기준
     if(fMonth){
-      if(!t.deadline) return false;
       const dl = (t.deadline||'').slice(0,7);
       const st = (t.start || t.createdAt || t.deadline||'').slice(0,7);
-      // 마감월이 fMonth 이후이고, 시작월이 fMonth 이전이면 포함
-      if(dl < fMonth || st > fMonth) return false;
+      if(dl){
+        // 데드라인 있음: 기간이 해당 월과 겹치면 표시
+        if(dl < fMonth || (st && st > fMonth)) return false;
+      } else {
+        // 데드라인 없음: 등록월 기준
+        if(st && st !== fMonth) return false;
+      }
     }
     // 지점 탭 필터 (관리자/직원 전용)
     if(fBranch==='__hq__'){
@@ -4471,19 +4480,16 @@ function submitTask(){
     if(i>-1) tasks[i]=obj;
   } else tasks.push(obj);
 
-  // 1) 로컬 즉시 반영 + 화면 갱신
+  // 로컬 즉시 반영
   localStorage.setItem('dr_tasks', JSON.stringify(tasks));
+  // 저장 시각 기록 (Firebase echo 무시용 - 2초로 여유있게)
+  window._myLastSave = Date.now();
   closeTaskModal();
-  render();
+  render(); // 즉시 화면 갱신
 
-  // 2) Firebase에 저장 (비동기 — 실패해도 로컬은 이미 반영됨)
+  // Firebase 비동기 저장
   if(window.FB){
     window.FB.set('tasks', tasks)
-      .then(()=>{
-        // Firebase 저장 완료 후 한 번 더 render (혹시 중간에 다른 사람 데이터 들어왔으면 반영)
-        const latest = LS.get('tasks')||[];
-        render();
-      })
       .catch(e=>console.warn('FB tasks save fail:', e));
   }
 }
