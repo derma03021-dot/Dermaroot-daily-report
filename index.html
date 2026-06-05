@@ -355,6 +355,22 @@ td{padding:11px 14px;vertical-align:middle;font-size:13px;}
 .fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
 .link-row{display:flex;align-items:center;gap:6px;}
 
+/* ── 담당자 칩 ── */
+.person-chip{
+  display:inline-flex;align-items:center;gap:5px;
+  background:var(--surface2);border:1px solid var(--border2);
+  color:var(--text);padding:3px 10px 3px 12px;border-radius:16px;
+  font-size:11px;font-weight:500;cursor:default;
+}
+.person-chip.selected{
+  background:var(--accent-dim);border-color:var(--accent);color:var(--accent);font-weight:600;
+}
+.person-chip-x{
+  background:none;border:none;color:inherit;cursor:pointer;
+  font-size:13px;line-height:1;padding:0;opacity:.6;font-family:var(--font);
+}
+.person-chip-x:hover{opacity:1;}
+
 /* ── SPEC PANEL ── */
 .spec-block{margin-bottom:12px;}
 .spec-label{font-size:10px;color:var(--text-dim);letter-spacing:.07em;text-transform:uppercase;margin-bottom:6px;}
@@ -1136,9 +1152,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
     <div id="personFg">
       <!-- 일반 부서용 (hq / clinic) -->
       <div class="fg" id="personNormalFg">
-        <label class="fl">담당자</label>
-        <select class="fs" id="f_person_dept_select"><option value="">선택 안 함</option></select>
-        <input class="fi" type="text" id="f_person_input" placeholder="직접 입력" style="margin-top:6px">
+        <label class="fl">담당자 <span style="font-size:9px;color:var(--text-faint);text-transform:none;letter-spacing:0">중복 선택 가능</span></label>
+        <div id="personChipsWrap" style="display:flex;flex-wrap:wrap;gap:6px;min-height:32px;padding:6px 0"></div>
+        <input class="fi" type="text" id="f_person_input" placeholder="직접 입력 (엔터로 추가)" style="margin-top:6px"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();addPersonChip(this.value.trim());this.value=''}">
       </div>
       <!-- 실행사 담당자 (partner: 체험단/인플루언서) -->
       <div class="fg" id="personPartnerFg" style="display:none">
@@ -3925,24 +3942,29 @@ function updatePersonField(deptVal){
     if(timeInput) timeInput.style.display='none';
     if(deadlineLabel) deadlineLabel.textContent='데드라인';
 
-    // 부서별 직원 드롭다운
-    const deptSel=document.getElementById('f_person_dept_select');
-    if(deptSel){
-      const curVal=deptSel.value;
-      deptSel.innerHTML='<option value="">선택 안 함</option>';
-      const staff=LS.get('staff')||[];
-      // cat=partner & 본사업무: 전체 직원 / hq: 해당 부서 / clinic: 지점팀
-      let filtered;
-      if(deptVal==='본사 업무') filtered=staff;
-      else if(deptVal&&deptVal!=='__custom__') filtered=staff.filter(s=>s.dept===deptVal);
-      else filtered=staff;
+    // 현재 선택 유지하면서 칩 재렌더
+    const curSelected = getSelectedPersons();
+    const staff = LS.get('staff')||[];
+    let filtered;
+    if(deptVal==='본사 업무') filtered = staff;
+    else if(deptVal && deptVal!=='__custom__') filtered = staff.filter(s=>s.dept===deptVal);
+    else filtered = staff;
+
+    const wrap = document.getElementById('personChipsWrap');
+    if(wrap){
+      wrap.innerHTML = '';
       filtered.forEach(s=>{
-        const o=document.createElement('option');
-        o.value=s.name;
-        o.textContent=s.name+(deptVal==='본사 업무'?' ('+s.dept+')':'');
-        deptSel.appendChild(o);
+        const chip = document.createElement('span');
+        chip.className = 'person-chip' + (curSelected.includes(s.name) ? ' selected' : '');
+        chip.dataset.name = s.name;
+        const label = s.name + (deptVal==='본사 업무' ? ' ('+s.dept+')' : '');
+        chip.innerHTML = label + '<button class="person-chip-x" tabindex="-1">×</button>';
+        chip.addEventListener('click', (e)=>{
+          if(e.target.classList.contains('person-chip-x')) chip.classList.remove('selected');
+          else chip.classList.toggle('selected');
+        });
+        wrap.appendChild(chip);
       });
-      deptSel.value=curVal;
     }
   }
 }
@@ -3991,14 +4013,21 @@ function openTaskModal(idx=null){
     const deptValForPerson=document.getElementById('f_dept').value==='__custom__'
       ? document.getElementById('f_dept_custom').value : document.getElementById('f_dept').value;
     document.getElementById('f_person_input').value='';
+    // 담당자 칩 선택 해제
+    document.querySelectorAll('#personChipsWrap .person-chip').forEach(c=>c.classList.remove('selected'));
     updatePersonField(deptValForPerson);
     // 일반 부서: 드롭다운 또는 텍스트 복원
     if(!isVisitType(deptValForPerson)){
-      const dSel=document.getElementById('f_person_dept_select');
-      if(dSel && [...dSel.options].some(o=>o.value===t.person)){
-        dSel.value=t.person||'';
-      } else {
-        document.getElementById('f_person_input').value=t.person||'';
+      // 저장된 person을 칩으로 복원 (·로 구분된 다중 담당자)
+      const savedPersons = (t.person||'').split(' · ').map(s=>s.trim()).filter(Boolean);
+      const wrap = document.getElementById('personChipsWrap');
+      if(wrap){
+        wrap.querySelectorAll('.person-chip').forEach(chip=>{
+          if(savedPersons.includes(chip.dataset.name)) chip.classList.add('selected');
+        });
+        // 직원 목록에 없는 직접입력 이름도 칩으로 추가
+        const existingNames = [...wrap.querySelectorAll('.person-chip')].map(c=>c.dataset.name);
+        savedPersons.filter(n=>!existingNames.includes(n)).forEach(n=>addPersonChip(n, wrap));
       }
     }
     // 방문 유형: person 값에서 실행사/지점팀 복원
@@ -4047,8 +4076,7 @@ function openTaskModal(idx=null){
     document.getElementById('f_dept_custom').style.display='none';
     document.getElementById('f_dept_custom').value='';
     document.getElementById('f_person_input').value='';
-    const dSelNew=document.getElementById('f_person_dept_select');
-    if(dSelNew) dSelNew.value='';
+    // 담당자 칩으로 관리됨
     document.getElementById('f_person_partner').innerHTML='<option value="">선택 안 함</option>';
     document.getElementById('f_person_staff').innerHTML='<option value="">선택 안 함</option>';
     document.getElementById('personPartnerFg').style.display='none';
@@ -4085,6 +4113,63 @@ function openTaskModal(idx=null){
 function closeTaskModal(){
   document.getElementById('taskOverlay').classList.remove('open');
   if(window._pendingRender){ window._pendingRender=false; render(); }
+}
+
+// ── 담당자 멀티 칩 ──
+
+// 현재 선택된 담당자 목록 반환
+function getSelectedPersons(){
+  return [...document.querySelectorAll('#personChipsWrap .person-chip.selected')]
+    .map(el => el.dataset.name);
+}
+
+// 담당자 칩 렌더 (staff 목록 기반)
+function renderPersonChips(dept, selected){
+  const wrap = document.getElementById('personChipsWrap');
+  if(!wrap) return;
+  wrap.innerHTML = '';
+
+  const staffList = (LS.get('staff')||[]).filter(s => !dept || s.dept === dept);
+
+  staffList.forEach(s => {
+    const chip = document.createElement('span');
+    chip.className = 'person-chip' + (selected.includes(s.name) ? ' selected' : '');
+    chip.dataset.name = s.name;
+    chip.innerHTML = s.name + '<button class="person-chip-x" tabindex="-1">×</button>';
+
+    // 칩 클릭 → 선택/해제
+    chip.addEventListener('click', (e)=>{
+      if(e.target.classList.contains('person-chip-x')){
+        chip.classList.remove('selected');
+      } else {
+        chip.classList.toggle('selected');
+      }
+    });
+    wrap.appendChild(chip);
+  });
+
+  // 직접 입력으로 추가된 이름도 칩으로 표시
+  selected.filter(n => !staffList.some(s=>s.name===n)).forEach(n=>{
+    addPersonChip(n, wrap);
+  });
+}
+
+// 직접 입력 담당자 칩 추가
+function addPersonChip(name, wrap){
+  if(!name) return;
+  wrap = wrap || document.getElementById('personChipsWrap');
+  if(!wrap) return;
+  // 중복 방지
+  if([...wrap.querySelectorAll('.person-chip')].some(c=>c.dataset.name===name)) return;
+  const chip = document.createElement('span');
+  chip.className = 'person-chip selected';
+  chip.dataset.name = name;
+  chip.innerHTML = name + '<button class="person-chip-x" tabindex="-1">×</button>';
+  chip.addEventListener('click', (e)=>{
+    if(e.target.classList.contains('person-chip-x')) chip.remove();
+    else chip.classList.toggle('selected');
+  });
+  wrap.appendChild(chip);
 }
 
 // ── 스펙 패널 (디자인/영상) ──
@@ -4350,10 +4435,11 @@ function submitTask(){
         const staff=document.getElementById('f_person_staff').value;
         return [partner,staff].filter(Boolean).join(' / ')||'';
       }
-      const dSel=document.getElementById('f_person_dept_select');
-      const dSelVal=dSel?dSel.value:'';
-      const textVal=document.getElementById('f_person_input').value.trim();
-      return dSelVal||textVal;
+      // 칩 선택값 + 직접입력 합치기
+      const chipVals = getSelectedPersons();
+      const textVal  = document.getElementById('f_person_input').value.trim();
+      if(textVal && !chipVals.includes(textVal)) chipVals.push(textVal);
+      return chipVals.join(' · ') || '';
     })(),
     task,
     start:document.getElementById('f_start').value||'',
