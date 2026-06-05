@@ -1888,15 +1888,22 @@ function getVisibleTasks(){
 
 function getFilteredTasks(){
   return getVisibleTasks().filter(t=>{
-    // 날짜 필터: 달력에서 선택한 특정 날짜의 업무만
+    // 날짜 필터: start ~ deadline 범위 안에 선택 날짜가 포함되면 표시
     if(fDate){
       if(!t.deadline) return false;
-      if((t.deadline||'').slice(0,10) !== fDate) return false;
+      const dl = (t.deadline||'').slice(0,10);
+      // start: 입력된 시작일 or 등록일(createdAt) or deadline과 동일
+      const st = t.start || t.createdAt || dl;
+      // 선택 날짜가 시작일~데드라인 범위 내에 있으면 표시
+      if(fDate < st || fDate > dl) return false;
     }
-    // 월 필터: 선택한 연·월과 deadline 월이 일치하는 업무만
+    // 월 필터: start ~ deadline 기간이 해당 월과 겹치면 표시
     if(fMonth){
       if(!t.deadline) return false;
-      if((t.deadline||'').slice(0,7) !== fMonth) return false;
+      const dl = (t.deadline||'').slice(0,7);
+      const st = (t.start || t.createdAt || t.deadline||'').slice(0,7);
+      // 마감월이 fMonth 이후이고, 시작월이 fMonth 이전이면 포함
+      if(dl < fMonth || st > fMonth) return false;
     }
     // 지점 탭 필터 (관리자/직원 전용)
     if(fBranch==='__hq__'){
@@ -3337,7 +3344,19 @@ function renderCalendar(){
   const today=new Date().toISOString().slice(0,10);
   const tasks=LS.get('tasks')||[];
   // 이번 달에 deadline 있는 날짜 Set
-  const taskDates=new Set(tasks.map(t=>t.deadline).filter(Boolean));
+  // 달력 점: start~deadline 범위 전체 날짜에 표시
+  const taskDates = new Set();
+  tasks.filter(t=>t.deadline).forEach(t=>{
+    const dl = t.deadline.slice(0,10);
+    const st = t.start || t.createdAt || dl;
+    const startD = new Date(st+'T00:00:00');
+    const endD   = new Date(dl+'T00:00:00');
+    const days   = Math.min(Math.ceil((endD-startD)/86400000)+1, 60);
+    for(let i=0; i<days; i++){
+      const d = new Date(startD); d.setDate(d.getDate()+i);
+      taskDates.add(d.toISOString().slice(0,10));
+    }
+  });
 
   const y=calViewYear, m=calViewMonth;
   const firstDay=new Date(y,m,1).getDay(); // 0=일
@@ -4338,6 +4357,9 @@ function submitTask(){
     })(),
     task,
     start:document.getElementById('f_start').value||'',
+    createdAt:document.getElementById('f_start').value
+      ? document.getElementById('f_start').value
+      : (()=>{const n=new Date(); n.setHours(n.getHours()+9); return n.toISOString().slice(0,10);})(),
     deadline:(()=>{
       const d=document.getElementById('f_deadline').value;
       const t=document.getElementById('f_time').value;
