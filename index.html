@@ -1037,6 +1037,13 @@ document.addEventListener('DOMContentLoaded', ()=>{
 </script>
 </head>
 <body>
+<div id="debugBanner" style="position:fixed;bottom:0;left:0;right:0;background:#1a1a2e;color:#00ff88;font-family:monospace;font-size:11px;padding:6px 12px;z-index:999999;display:flex;gap:16px;align-items:center">
+  <span>🔧 DEBUG</span>
+  <span id="dbVersion">version: checking...</span>
+  <span id="dbFB">Firebase: checking...</span>
+  <span id="dbSettings">Settings: checking...</span>
+  <button onclick="document.getElementById('debugBanner').style.display='none'" style="margin-left:auto;background:#333;border:none;color:#fff;padding:2px 8px;cursor:pointer;border-radius:3px">닫기</button>
+</div>
 
 <!-- ── LOCK SCREEN ── -->
 <div id="lockScreen">
@@ -1071,7 +1078,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
 <!-- ── HEADER ── -->
 <div id="appHeader" style="display:none">
-  <div class="h-logo">DERMAROOT<span>/</span>Daily</div>
+  <div class="h-logo">DERMAROOT<span>/</span>Daily<span style="font-size:9px;opacity:.35;font-family:var(--mono);margin-left:6px">v0706</span></div>
   <div class="h-context" id="contextBadge"></div>
   <div class="h-spacer"></div>
   <button id="calTrigger" onclick="toggleCalendar(event)">
@@ -1091,7 +1098,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     <button class="theme-btn" data-theme="dark" onclick="setTheme('dark')">다크</button>
     <button class="theme-btn" data-theme="light" onclick="setTheme('light')">라이트</button>
   </div>
-  <button class="h-btn-settings" onclick="openSettings()" title="설정">⚙</button>
+  <button class="h-btn-settings" onclick="(window.openSettings||function(){alert('openSettings 없음');})()" title="설정">⚙</button>
   <button class="h-logout" onclick="logout()">로그아웃</button>
 </div>
 
@@ -1797,8 +1804,7 @@ async function afterLogin(){
   subscribeFirebase(); // 실시간 구독 시작
   // 로그인 시 오늘 날짜로 필터 초기화
   const _today = (()=>{ const n=new Date(); n.setHours(n.getHours()+9); return n.toISOString().slice(0,10); })();
-  fDate = _today;
-  fMonth = '';
+  fDate = _today; fMonth = '';
   buildLockSelect();
   document.getElementById('lockScreen').style.display='none';
   document.getElementById('appHeader').style.display='flex';
@@ -3491,10 +3497,11 @@ function renderCalendar(){
   const taskDates = new Set();
   tasks.filter(t=>t.deadline).forEach(t=>{
     const dl = t.deadline.slice(0,10);
-    const st = (t.start || t.createdAt || '');
-    // start/createdAt 없으면 오늘부터 deadline까지 점 표시
-    const rangeStart = st && st <= dl ? st : _todayStr;
-    const startD = new Date((rangeStart <= dl ? rangeStart : dl)+'T00:00:00');
+    const stRaw = (t.start||'') || (t.createdAt||'');
+    // start/createdAt 있으면 그 날부터, 없으면 오늘부터 deadline까지 점 표시
+    const rangeStart = (stRaw && stRaw.slice(0,10) <= dl) ? stRaw.slice(0,10) : _todayStr;
+    const actualStart = rangeStart <= dl ? rangeStart : dl;
+    const startD = new Date(actualStart+'T00:00:00');
     const endD   = new Date(dl+'T00:00:00');
     const days   = Math.min(Math.ceil((endD-startD)/86400000)+1, 90);
     for(let i=0; i<days; i++){
@@ -4674,10 +4681,33 @@ function deleteTask(idx){
 //  SETTINGS
 // ══════════════════════════════════════════
 function openSettings(){
-  renderSettingsLists();
-  document.getElementById('settingsPanel').classList.add('open');
+  try { renderSettingsLists(); } catch(e){ console.warn('renderSettingsLists err:', e); }
+  const p = document.getElementById('settingsPanel');
+  if(p) p.classList.add('open');
 }
-function closeSettings(){document.getElementById('settingsPanel').classList.remove('open');}
+// window에 명시 등록 - onclick 속성에서 반드시 찾을 수 있게
+window.openSettings = openSettings;
+
+// 디버그 배너 업데이트
+function updateDebug(){
+  const v = document.getElementById('dbVersion');
+  const fb = document.getElementById('dbFB');
+  const st = document.getElementById('dbSettings');
+  if(v) v.textContent = 'version: v0706';
+  if(fb) fb.textContent = 'Firebase: ' + (window.FB ? '✅연결됨' : '❌미연결(로컬모드)');
+  if(st){
+    const p = document.getElementById('settingsPanel');
+    st.textContent = 'SettingsPanel: ' + (p ? '✅DOM있음' : '❌없음');
+  }
+}
+setTimeout(updateDebug, 1000);
+window.addEventListener('fb-ready', updateDebug);
+
+function closeSettings(){
+  const p = document.getElementById('settingsPanel');
+  if(p) p.classList.remove('open');
+}
+window.closeSettings = closeSettings;
 document.getElementById('settingsPanel').addEventListener('click',e=>{
   if(e.target===e.currentTarget) closeSettings();
 });
