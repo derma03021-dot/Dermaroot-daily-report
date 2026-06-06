@@ -1262,6 +1262,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
           <button type="button" class="spec-chip" data-val="메인">메인</button>
           <button type="button" class="spec-chip" data-val="리사이징">리사이징</button>
           <button type="button" class="spec-chip" data-val="전후사진">전후사진</button>
+          <button type="button" class="spec-chip" data-val="구인공고">구인공고</button>
+          <button type="button" class="spec-chip" data-val="리플렛">리플렛</button>
+          <button type="button" class="spec-chip" data-val="명함">명함</button>
+          <button type="button" class="spec-chip" data-val="명찰">명찰</button>
         </div>
       </div>
       <div class="spec-block">
@@ -1545,7 +1549,7 @@ const LS = {
 
 // Firebase → localStorage 단방향 동기화 (최초 로드)
 async function syncFromFirebase(){
-  if(!window.FB) return;
+  if(!window.FB){ fbHide(); return; }
   fbShow();
   // 5초 타임아웃: Firebase 응답 없으면 로컬 데이터로 계속 진행
   const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 5000));
@@ -1770,8 +1774,7 @@ function quickLogin(role){
 }
 
 async function afterLogin(){
-  fbShow();
-  await syncFromFirebase();
+  await syncFromFirebase(); // fbShow/fbHide는 syncFromFirebase 내부에서 처리
   initData(); // Firebase 데이터 기반으로 로컬 초기화
 
   // Firebase에 branches가 없으면 기본값 저장 (최초 1회)
