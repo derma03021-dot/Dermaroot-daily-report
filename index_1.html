@@ -12,26 +12,19 @@ window.FB = null;
 window.FB_READY = false;
 
 (function loadFirebase(){
-  const SDK_URLS = [
-    'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js',
-    'https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js'
-  ];
-  let loaded = 0;
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyC5AgRfKFrbqUDmEhweFMEaO5AfTdZyJWA",
+    authDomain: "dermaroot-report-6d21d.firebaseapp.com",
+    databaseURL: "https://dermaroot-report-6d21d-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "dermaroot-report-6d21d",
+    storageBucket: "dermaroot-report-6d21d.firebasestorage.app",
+    messagingSenderId: "487662796633",
+    appId: "1:487662796633:web:50c04bfe8e0e2918139648"
+  };
 
-  function onScriptLoad(){
-    loaded++;
-    if(loaded < SDK_URLS.length) return;
-    // 두 SDK 모두 로드 완료 → Firebase 초기화
+  function initFB(){
     try {
-      firebase.initializeApp({
-        apiKey: "AIzaSyC5AgRfKFrbqUDmEhweFMEaO5AfTdZyJWA",
-        authDomain: "dermaroot-report-6d21d.firebaseapp.com",
-        databaseURL: "https://dermaroot-report-6d21d-default-rtdb.asia-southeast1.firebasedatabase.app",
-        projectId: "dermaroot-report-6d21d",
-        storageBucket: "dermaroot-report-6d21d.firebasestorage.app",
-        messagingSenderId: "487662796633",
-        appId: "1:487662796633:web:50c04bfe8e0e2918139648"
-      });
+      firebase.initializeApp(FIREBASE_CONFIG);
       const _db = firebase.database();
       window.FB = {
         get: (k) => _db.ref(k).get().then(s => s.exists() ? s.val() : null),
@@ -46,18 +39,18 @@ window.FB_READY = false;
     }
   }
 
-  function onScriptError(){
-    // CDN 로드 실패 = 오프라인/file:// → FB는 null 유지, 앱은 정상 작동
-    console.warn('Firebase SDK load failed - offline mode');
-  }
-
-  SDK_URLS.forEach(url => {
-    const s = document.createElement('script');
-    s.src = url;
-    s.onload = onScriptLoad;
-    s.onerror = onScriptError;
-    document.head.appendChild(s);
-  });
+  // app SDK 먼저 로드 → 완료 후 database SDK 로드 (순서 보장)
+  const s1 = document.createElement('script');
+  s1.src = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js';
+  s1.onerror = () => console.warn('Firebase SDK load failed - offline mode');
+  s1.onload = () => {
+    const s2 = document.createElement('script');
+    s2.src = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js';
+    s2.onerror = () => console.warn('Firebase DB SDK load failed');
+    s2.onload = initFB;
+    document.head.appendChild(s2);
+  };
+  document.head.appendChild(s1);
 })();
 </script>
 <style>
@@ -1033,6 +1026,13 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // FB 준비됐으면 바로, 아니면 준비 이벤트 대기
   if(window.FB_READY) setTimeout(refreshFromFB, 0);
   else window.addEventListener('fb-ready', ()=>setTimeout(refreshFromFB, 0));
+
+  // Firebase가 로그인 후 로드되면 실시간 구독 시작
+  window.addEventListener('fb-ready', ()=>{
+    if(window.SESSION && window.SESSION.role && typeof subscribeFirebase === 'function'){
+      subscribeFirebase();
+    }
+  });
 });
 </script>
 </head>
@@ -1071,7 +1071,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
 <!-- ── HEADER ── -->
 <div id="appHeader" style="display:none">
-  <div class="h-logo">DERMAROOT<span>/</span>Daily</div>
+  <div class="h-logo">DERMAROOT<span>/</span>Daily<span style="font-size:9px;opacity:.35;font-family:var(--mono);margin-left:6px">v0706</span></div>
   <div class="h-context" id="contextBadge"></div>
   <div class="h-spacer"></div>
   <button id="calTrigger" onclick="toggleCalendar(event)">
@@ -1140,11 +1140,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   <div class="routine-body" id="routineBody"></div>
 </div>
 
-<!-- ── FIREBASE 로딩 오버레이 ── -->
-<div id="fbLoading" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;align-items:center;justify-content:center;flex-direction:column;gap:14px;">
-  <div style="width:36px;height:36px;border:3px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite"></div>
-  <div style="color:#fff;font-size:12px;letter-spacing:.08em;opacity:.8">서버 동기화 중...</div>
-</div>
+<!-- ── 동기화 인디케이터 (헤더 내 텍스트만, 오버레이 없음) ── -->
+<div id="fbLoading" style="display:none"></div>
 
 <!-- ── 토스트 알림 컨테이너 ── -->
 <div id="toastContainer"></div>
@@ -1262,6 +1259,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
           <button type="button" class="spec-chip" data-val="메인">메인</button>
           <button type="button" class="spec-chip" data-val="리사이징">리사이징</button>
           <button type="button" class="spec-chip" data-val="전후사진">전후사진</button>
+          <button type="button" class="spec-chip" data-val="구인공고">구인공고</button>
+          <button type="button" class="spec-chip" data-val="리플렛">리플렛</button>
+          <button type="button" class="spec-chip" data-val="명함">명함</button>
+          <button type="button" class="spec-chip" data-val="명찰">명찰</button>
         </div>
       </div>
       <div class="spec-block">
@@ -1520,10 +1521,16 @@ document.addEventListener('DOMContentLoaded', ()=>{
 // ══════════════════════════════════════════
 //  DATA STORE
 // ══════════════════════════════════════════
-// ── 로딩 오버레이 ──
+// ── 동기화 인디케이터 (오버레이 없음 - 버튼 차단 방지) ──
 const loadingEl = document.getElementById('fbLoading');
-function fbShow(){ if(loadingEl) loadingEl.style.display='flex'; }
-function fbHide(){ if(loadingEl) loadingEl.style.display='none'; }
+function fbShow(){
+  const logo = document.querySelector('.h-logo');
+  if(logo) logo.title = '서버 동기화 중...';
+}
+function fbHide(){
+  const logo = document.querySelector('.h-logo');
+  if(logo) logo.title = '';
+}
 
 // ── 하이브리드 스토리지 (Firebase + localStorage) ──
 // 공유 키: Firebase / 개인 상태 키: localStorage
@@ -1699,21 +1706,22 @@ let SESSION = {role:'', branchId:''};
 
 // ── 토스트 알림 ──
 let _activeToast = null;
-function showToast(msg, type='info', duration=2500){
+function showToast(msg, type='info', duration=4000){
   const container = document.getElementById('toastContainer');
   if(!container) return;
 
-  // 기존 토스트 제거
+  // 같은 타입 기존 토스트 제거
   if(_activeToast){ _activeToast.remove(); _activeToast=null; }
 
   const el = document.createElement('div');
   el.className = 'toast ' + type;
-  el.textContent = msg;
+  el.innerHTML = `<span>${msg}</span><button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:inherit;opacity:.6;font-size:14px;margin-left:8px;padding:0;font-family:var(--font)">×</button>`;
   container.appendChild(el);
   _activeToast = el;
 
   if(duration > 0){
     setTimeout(()=>{
+      if(!el.parentElement) return;
       el.style.animation = 'toastOut .2s ease forwards';
       setTimeout(()=>{ el.remove(); if(_activeToast===el) _activeToast=null; }, 200);
     }, duration);
@@ -1787,6 +1795,9 @@ async function afterLogin(){
   }
 
   subscribeFirebase(); // 실시간 구독 시작
+  // 로그인 시 오늘 날짜로 필터 초기화
+  const _today = (()=>{ const n=new Date(); n.setHours(n.getHours()+9); return n.toISOString().slice(0,10); })();
+  fDate = _today; fMonth = '';
   buildLockSelect();
   document.getElementById('lockScreen').style.display='none';
   document.getElementById('appHeader').style.display='flex';
@@ -2006,31 +2017,32 @@ function getFilteredTasks(){
     // 날짜 필터
     if(fDate){
       const dl = (t.deadline||'').slice(0,10);
-      const st = (t.start||'') || (t.createdAt||'') || dl;
-      // 데드라인도 없고 등록일도 없으면 → 항상 표시
-      if(!dl && !st) { /* pass */ }
-      else if(dl){
-        // 데드라인 있음: start(또는 등록일) ~ deadline 범위
-        const rangeStart = (st && st <= dl) ? st : dl; // 빈 문자열 방어
-        if(fDate < rangeStart || fDate > dl) return false;
+      const st = ((t.start||'') || (t.createdAt||'')).slice(0,10);
+      if(!dl && !st){
+        /* deadline·등록일 없음 → 항상 표시 */
+      } else if(dl && st){
+        // 시작일~데드라인 범위 체크
+        if(fDate < st || fDate > dl) return false;
+      } else if(dl && !st){
+        // 데드라인만 있고 시작일 모름 → 데드라인 이전이면 표시
+        if(fDate > dl) return false;
       } else {
-        // 데드라인 없음, 등록일만 있음: 등록일 이후 날짜에 표시
+        // 시작일만 있음
         if(fDate < st) return false;
       }
     }
     // 월 필터
     if(fMonth){
       const dl = (t.deadline||'').slice(0,7);
-      const st = ((t.start||'') || (t.createdAt||'') || dl).slice(0,7);
-      // 데드라인도 없고 등록일도 없으면 → 항상 표시
-      if(!dl && !st) { /* pass */ }
-      else if(dl){
-        // 데드라인 있는 기간이 해당 월과 겹치면 표시
-        const rangeStart = (st && st <= dl) ? st : dl;
-        if(fMonth < rangeStart || fMonth > dl) return false;
+      const st = ((t.start||'') || (t.createdAt||'')).slice(0,7);
+      if(!dl && !st){
+        /* 항상 표시 */
+      } else if(dl && st){
+        if(fMonth < st || fMonth > dl) return false;
+      } else if(dl && !st){
+        if(fMonth > dl) return false;
       } else {
-        // 데드라인 없음: 등록월과 일치하면 표시
-        if(st.slice(0,7) !== fMonth) return false;
+        if(st !== fMonth) return false;
       }
     }
     // 지점 탭 필터 (관리자/직원 전용)
@@ -3473,13 +3485,18 @@ function renderCalendar(){
   const tasks=LS.get('tasks')||[];
   // 이번 달에 deadline 있는 날짜 Set
   // 달력 점: start~deadline 범위 전체 날짜에 표시
+  // deadline만 있고 start/createdAt 없으면 → 오늘부터 deadline까지
+  const _todayStr = (()=>{ const n=new Date(); n.setHours(n.getHours()+9); return n.toISOString().slice(0,10); })();
   const taskDates = new Set();
   tasks.filter(t=>t.deadline).forEach(t=>{
     const dl = t.deadline.slice(0,10);
-    const st = t.start || t.createdAt || dl;
-    const startD = new Date(st+'T00:00:00');
+    const stRaw = (t.start||'') || (t.createdAt||'');
+    // start/createdAt 있으면 그 날부터, 없으면 오늘부터 deadline까지 점 표시
+    const rangeStart = (stRaw && stRaw.slice(0,10) <= dl) ? stRaw.slice(0,10) : _todayStr;
+    const actualStart = rangeStart <= dl ? rangeStart : dl;
+    const startD = new Date(actualStart+'T00:00:00');
     const endD   = new Date(dl+'T00:00:00');
-    const days   = Math.min(Math.ceil((endD-startD)/86400000)+1, 60);
+    const days   = Math.min(Math.ceil((endD-startD)/86400000)+1, 90);
     for(let i=0; i<days; i++){
       const d = new Date(startD); d.setDate(d.getDate()+i);
       taskDates.add(d.toISOString().slice(0,10));
@@ -4657,10 +4674,18 @@ function deleteTask(idx){
 //  SETTINGS
 // ══════════════════════════════════════════
 function openSettings(){
-  renderSettingsLists();
-  document.getElementById('settingsPanel').classList.add('open');
+  try { renderSettingsLists(); } catch(e){ console.warn('renderSettingsLists err:', e); }
+  const p = document.getElementById('settingsPanel');
+  if(p) p.classList.add('open');
 }
-function closeSettings(){document.getElementById('settingsPanel').classList.remove('open');}
+// window에 명시 등록 - onclick 속성에서 반드시 찾을 수 있게
+window.openSettings = openSettings;
+
+function closeSettings(){
+  const p = document.getElementById('settingsPanel');
+  if(p) p.classList.remove('open');
+}
+window.closeSettings = closeSettings;
 document.getElementById('settingsPanel').addEventListener('click',e=>{
   if(e.target===e.currentTarget) closeSettings();
 });
