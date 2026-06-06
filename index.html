@@ -1795,6 +1795,10 @@ async function afterLogin(){
   }
 
   subscribeFirebase(); // 실시간 구독 시작
+  // 로그인 시 오늘 날짜로 필터 초기화
+  const _today = (()=>{ const n=new Date(); n.setHours(n.getHours()+9); return n.toISOString().slice(0,10); })();
+  fDate = _today;
+  fMonth = '';
   buildLockSelect();
   document.getElementById('lockScreen').style.display='none';
   document.getElementById('appHeader').style.display='flex';
@@ -3482,13 +3486,17 @@ function renderCalendar(){
   const tasks=LS.get('tasks')||[];
   // 이번 달에 deadline 있는 날짜 Set
   // 달력 점: start~deadline 범위 전체 날짜에 표시
+  // deadline만 있고 start/createdAt 없으면 → 오늘부터 deadline까지
+  const _todayStr = (()=>{ const n=new Date(); n.setHours(n.getHours()+9); return n.toISOString().slice(0,10); })();
   const taskDates = new Set();
   tasks.filter(t=>t.deadline).forEach(t=>{
     const dl = t.deadline.slice(0,10);
-    const st = t.start || t.createdAt || dl;
-    const startD = new Date(st+'T00:00:00');
+    const st = (t.start || t.createdAt || '');
+    // start/createdAt 없으면 오늘부터 deadline까지 점 표시
+    const rangeStart = st && st <= dl ? st : _todayStr;
+    const startD = new Date((rangeStart <= dl ? rangeStart : dl)+'T00:00:00');
     const endD   = new Date(dl+'T00:00:00');
-    const days   = Math.min(Math.ceil((endD-startD)/86400000)+1, 60);
+    const days   = Math.min(Math.ceil((endD-startD)/86400000)+1, 90);
     for(let i=0; i<days; i++){
       const d = new Date(startD); d.setDate(d.getDate()+i);
       taskDates.add(d.toISOString().slice(0,10));
