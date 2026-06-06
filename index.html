@@ -1037,7 +1037,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
 </script>
 </head>
 <body>
-<div id="debugBanner" style="position:fixed;bottom:0;left:0;right:0;background:#1a1a2e;color:#00ff88;font-family:monospace;font-size:11px;padding:6px 12px;z-index:999999;display:flex;gap:16px;align-items:center">
+<div id="debugBanner" style="position:fixed;bottom:0;left:0;right:0;background:#c8511a;color:#fff;font-family:monospace;font-size:11px;padding:6px 12px;z-index:999999;display:flex;gap:16px;align-items:center">
   <span>🔧 DEBUG</span>
   <span id="dbVersion">version: checking...</span>
   <span id="dbFB">Firebase: checking...</span>
@@ -1078,7 +1078,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
 <!-- ── HEADER ── -->
 <div id="appHeader" style="display:none">
-  <div class="h-logo">DERMAROOT<span>/</span>Daily<span style="font-size:9px;opacity:.35;font-family:var(--mono);margin-left:6px">v0706</span></div>
+  <div class="h-logo">DERMAROOT<span>/</span>Daily<span style="font-size:9px;opacity:.35;font-family:var(--mono);margin-left:6px">v0606-0254</span></div>
   <div class="h-context" id="contextBadge"></div>
   <div class="h-spacer"></div>
   <button id="calTrigger" onclick="toggleCalendar(event)">
@@ -4693,7 +4693,7 @@ function updateDebug(){
   const v = document.getElementById('dbVersion');
   const fb = document.getElementById('dbFB');
   const st = document.getElementById('dbSettings');
-  if(v) v.textContent = 'version: v0706';
+  if(v) v.textContent = 'version: v0606-0254';
   if(fb) fb.textContent = 'Firebase: ' + (window.FB ? '✅연결됨' : '❌미연결(로컬모드)');
   if(st){
     const p = document.getElementById('settingsPanel');
